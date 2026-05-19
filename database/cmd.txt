@@ -1,0 +1,104 @@
+#!/bin/bash
+sudo dnf update -y
+sudo dnf install -y httpd mariadb105-server php php-mysqlnd
+sudo systemctl start httpd
+sudo systemctl enable httpd
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+echo "Je suis le serveur Instance ID: $INSTANCE_ID" | sudo tee /var/www/html/index.html > /dev/null
+sudo systemctl reload httpd
+
+Configure MySQL Root User
+----------------------------
+sudo mysql_secure_installation
+
+
+
+
+----------------------------
+
+CREATE DATABASE inventory;
+USE inventory;
+
+CREATE TABLE items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE USER 'app_user'@'localhost' IDENTIFIED BY '123password';
+GRANT ALL PRIVILEGES ON inventory.* TO 'app_user'@'localhost';
+FLUSH PRIVILEGES;
+
+
+
+
+/var/www/html/db.php
+-------------------------------------
+<?php
+$host = 'localhost';
+$db   = 'inventory';
+$user = 'app_user';
+$pass = '123password';
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$db", $user, $pass);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (PDOException $e) {
+    die("Connection failed: " . $e->getMessage());
+}
+?>
+
+
+/var/www/html/index.php
+-------------------------------------
+
+<?php include 'db.php'; ?>
+
+<h2>Simple Inventory CRUD</h2>
+
+<!-- Create Form -->
+<form method="POST">
+    <input type="text" name="name" placeholder="Item Name" required>
+    <input type="text" name="description" placeholder="Description">
+    <button type="submit" name="add">Add Item</button>
+</form>
+
+<?php
+// Handle Create
+if (isset($_POST['add'])) {
+    $stmt = $pdo->prepare("INSERT INTO items (name, description) VALUES (?, ?)");
+    $stmt->execute([$_POST['name'], $_POST['description']]);
+}
+
+// Handle Delete
+if (isset($_GET['delete'])) {
+    $stmt = $pdo->prepare("DELETE FROM items WHERE id = ?");
+    $stmt->execute([$_GET['delete']]);
+}
+
+// Read Operation
+$stmt = $pdo->query("SELECT * FROM items");
+echo "<table border='1'><tr><th>ID</th><th>Name</th><th>Description</th><th>Action</th></tr>";
+while ($row = $stmt->fetch()) {
+    echo "<tr>
+            <td>{$row['id']}</td>
+            <td>{$row['name']}</td>
+            <td>{$row['description']}</td>
+            <td><a href='?delete={$row['id']}'>Delete</a></td>
+          </tr>";
+}
+echo "</table>";
+?>
+
+
+
+Permission
+------------------
+sudo chown -R apache:apache /var/www/html
+
+
+
